@@ -159,23 +159,35 @@ module.exports.generateQueries = async (
     for (const [key, value] of Object.entries(record)) {
       query += `${key}:`;
       let type = attributes[key];
-      if (!type) {
-        throw new Error(
-          `No such field in the model:${key}. Please check the header in the file!`
-        );
-      } else if (type[0] === "[") {
-        const array = value.split(arrayDelimiter);
-        if (non_string_types.includes(type.slice(1, type.length - 1))) {
-          query += `[${array}],`;
+      try {
+        if (!type) {
+          throw new Error(
+            `No such field in the model:${key}. Please check the header in the file!`
+          );
+        } else if (value == "NULL" || value == '"NULL"' || value == "") {
+          continue;
+        } else if (type[0] === "[") {
+          const quoted = value[0] == '"' && value[value.length - 1] == '"';
+          const array = quoted
+            ? JSON.parse(value).split(arrayDelimiter)
+            : value.split(arrayDelimiter);
+          if (non_string_types.includes(type.slice(1, type.length - 1))) {
+            query += `[${array}],`;
+          } else {
+            query += `[${array.map(
+              (element) => `${JSON.stringify(element)}`
+            )}],`;
+          }
         } else {
-          query += `[${array.map((element) => `"${element}"`)}],`;
+          const quoted = value[0] == '"' && value[value.length - 1] == '"';
+          if (non_string_types.includes(type)) {
+            query += `${quoted ? JSON.parse(value) : value},`;
+          } else {
+            query += `${quoted ? value : JSON.stringify(value)},`;
+          }
         }
-      } else {
-        if (non_string_types.includes(type)) {
-          query += `${value},`;
-        } else {
-          query += `"${value}",`;
-        }
+      } catch (error) {
+        throw new Error(error);
       }
     }
     query = query.slice(0, query.length - 1);
