@@ -157,7 +157,6 @@ module.exports.generateQueries = async (
   for (const [index, record] of records.entries()) {
     query += `n${index + 1}: ${API}(`;
     for (const [key, value] of Object.entries(record)) {
-      query += `${key}:`;
       let type = attributes[key];
       try {
         if (!type) {
@@ -172,18 +171,18 @@ module.exports.generateQueries = async (
             ? JSON.parse(value).split(arrayDelimiter)
             : value.split(arrayDelimiter);
           if (non_string_types.includes(type.slice(1, type.length - 1))) {
-            query += `[${array}],`;
+            query += `${key}:[${array}],`;
           } else {
-            query += `[${array.map(
+            query += `${key}:[${array.map(
               (element) => `${JSON.stringify(element)}`
             )}],`;
           }
         } else {
           const quoted = value[0] == '"' && value[value.length - 1] == '"';
           if (non_string_types.includes(type)) {
-            query += `${quoted ? JSON.parse(value) : value},`;
+            query += `${key}:${quoted ? JSON.parse(value) : value},`;
           } else {
-            query += `${quoted ? value : JSON.stringify(value)},`;
+            query += `${key}:${quoted ? value : JSON.stringify(value)},`;
           }
         }
       } catch (error) {
