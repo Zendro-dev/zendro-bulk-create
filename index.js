@@ -3,18 +3,14 @@ const Papa = require("papaparse");
 /**
  * Parse a CSV file to queries or mutations and execute them
  * @param {object} file file stream
- * @param {string} model_name model name
- * @param {{string:string}} attributes attributes and corresponding types
- * @param {string} id primary key in the model
+ * @param {json} dataModelDefiniton data model definiton
  * @param {boolean} isValidation generate validation queries
  * @param {object} globals global environment variables
  * @param {function} execute_graphql function for executing queries or mutations
  */
 module.exports.csvProcessing = async (
   file,
-  model_name,
-  attributes,
-  id,
+  dataModelDefiniton,
   isValidation,
   globals,
   execute_graphql
@@ -36,9 +32,7 @@ module.exports.csvProcessing = async (
         if (recordsBuffer.length % BATCH_SIZE == 0) {
           const queries = await module.exports.generateQueries(
             recordsBuffer,
-            model_name,
-            attributes,
-            id,
+            dataModelDefiniton,
             isMutation,
             ARRAY_DELIMITER
           );
@@ -57,22 +51,22 @@ module.exports.csvProcessing = async (
         parser.resume();
       },
       complete: async () => {
-        const queries = await module.exports.generateQueries(
-          recordsBuffer,
-          model_name,
-          attributes,
-          id,
-          isMutation,
-          ARRAY_DELIMITER
-        );
-        const result = await module.exports.responseParser(
-          queries,
-          execute_graphql,
-          BATCH_SIZE,
-          batch_num
-        );
-        if (Object.keys(result).length > 0) {
-          reject(result);
+        if (recordsBuffer.length > 0) {
+          const queries = await module.exports.generateQueries(
+            recordsBuffer,
+            dataModelDefiniton,
+            isMutation,
+            ARRAY_DELIMITER
+          );
+          const result = await module.exports.responseParser(
+            queries,
+            execute_graphql,
+            BATCH_SIZE,
+            batch_num
+          );
+          if (Object.keys(result).length > 0) {
+            reject(result);
+          }
         }
         resolve();
       },
@@ -86,18 +80,14 @@ module.exports.csvProcessing = async (
 /**
  * Convert parsed records with JSON format to queries or mutations and execute them
  * @param {object} records parsed records, format as {field: value}
- * @param {string} model_name model name
- * @param {{string:string}} attributes attributes and corresponding types
- * @param {string} id primary key in the model
+ * @param {json} dataModelDefiniton data model definiton
  * @param {boolean} isValidation generate validation queries
  * @param {object} globals global environment variables
  * @param {function} execute_graphql function for executing queries or mutations
  */
 module.exports.jsonProcessing = async (
   records,
-  model_name,
-  attributes,
-  id,
+  dataModelDefiniton,
   isValidation,
   globals,
   execute_graphql
@@ -109,9 +99,7 @@ module.exports.jsonProcessing = async (
   while (records_num > 0) {
     const queries = await module.exports.generateQueries(
       records.slice(batch_num * BATCH_SIZE, (batch_num + 1) * BATCH_SIZE),
-      model_name,
-      attributes,
-      id,
+      dataModelDefiniton,
       isMutation,
       ARRAY_DELIMITER
     );
@@ -132,31 +120,41 @@ module.exports.jsonProcessing = async (
 /**
  * Convert parsed records with JSON format to queries or mutations
  * @param {object} records parsed records, format as {field: value}
- * @param {string} model_name model name
- * @param {{string:string}} attributes attributes and corresponding types
- * @param {string} id primary key in the model
+ * @param {json} dataModelDefiniton data model definiton
  * @param {boolean} isMutation generate mutations
  * @param {string} arrayDelimiter the delimiter for array
  * @returns {string} generated queries or mutations
  */
 module.exports.generateQueries = async (
   records,
-  model_name,
-  attributes,
-  id,
+  dataModelDefiniton,
   isMutation,
   arrayDelimiter
 ) => {
+  const modelName = dataModelDefiniton.model;
   const model_name_uppercase =
-    model_name.slice(0, 1).toUpperCase() + model_name.slice(1);
+    modelName.slice(0, 1).toUpperCase() + modelName.slice(1);
+  const id = dataModelDefiniton.id.name;
   const non_string_types = ["Int", "Float", "Boolean"];
   let query = isMutation ? "mutation{\n" : "{\n";
   const API = isMutation
     ? `add${model_name_uppercase}`
     : `validate${model_name_uppercase}ForCreation`;
+  const attributes = dataModelDefiniton.attributes;
+  let foreignKeyObj = {};
+  const associations = dataModelDefiniton.associations;
+  for (const [assocName, assocObj] of Object.entries(associations)) {
+    if (assocObj.keysIn === modelName) {
+      foreignKeyObj[assocObj.targetKey] =
+        "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
+    }
+  }
+  let foreignKeys = Object.keys(foreignKeyObj);
   for (const [index, record] of records.entries()) {
     query += `n${index + 1}: ${API}(`;
     for (const [key, value] of Object.entries(record)) {
+      const field =
+        foreignKeys && foreignKeys.includes(key) ? foreignKeyObj[key] : key;
       let type = attributes[key];
       try {
         if (!type) {
@@ -171,18 +169,18 @@ module.exports.generateQueries = async (
             ? JSON.parse(value).split(arrayDelimiter)
             : value.split(arrayDelimiter);
           if (non_string_types.includes(type.slice(1, type.length - 1))) {
-            query += `${key}:[${array}],`;
+            query += `${field}:[${array}],`;
           } else {
-            query += `${key}:[${array.map(
+            query += `${field}:[${array.map(
               (element) => `${JSON.stringify(element)}`
             )}],`;
           }
         } else {
           const quoted = value[0] == '"' && value[value.length - 1] == '"';
           if (non_string_types.includes(type)) {
-            query += `${key}:${quoted ? JSON.parse(value) : value},`;
+            query += `${field}:${quoted ? JSON.parse(value) : value},`;
           } else {
-            query += `${key}:${quoted ? value : JSON.stringify(value)},`;
+            query += `${field}:${quoted ? value : JSON.stringify(value)},`;
           }
         }
       } catch (error) {
