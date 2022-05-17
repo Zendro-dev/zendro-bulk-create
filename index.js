@@ -286,6 +286,7 @@ module.exports.bulkDownload = async (
     console.log(`Start to download ${total_records} records`);
     let writableStream = [];
     if (!is_browser) {
+      const fs = require("fs");
       writableStream = fs.createWriteStream(file_path);
     }
 
