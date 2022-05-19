@@ -16,8 +16,8 @@ module.exports.csvProcessing = async (
   globals,
   execute_graphql
 ) => {
-  const { BATCH_SIZE, RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } =
-    globals;
+  const { RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } = globals;
+  const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
   let recordsBuffer = [];
   let batch_num = 0;
   const isMutation = isValidation ? false : true;
@@ -93,7 +93,8 @@ module.exports.jsonProcessing = async (
   globals,
   execute_graphql
 ) => {
-  const { BATCH_SIZE, ARRAY_DELIMITER } = globals;
+  const { ARRAY_DELIMITER } = globals;
+  const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
   const isMutation = isValidation ? false : true;
   let records_num = records.length;
   let batch_num = 0;
@@ -261,8 +262,8 @@ module.exports.bulkDownload = async (
   file_path
 ) => {
   try {
-    const { BATCH_SIZE, RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } =
-      globals;
+    const { RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } = globals;
+    const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
 
     //get connection resolver
     let connection_resolver =
