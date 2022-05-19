@@ -1,4 +1,5 @@
 const Papa = require("papaparse");
+const inflection = require("inflection");
 
 /**
  * Parse a CSV file to queries or mutations and execute them
@@ -15,8 +16,8 @@ module.exports.csvProcessing = async (
   globals,
   execute_graphql
 ) => {
-  const { BATCH_SIZE, RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } =
-    globals;
+  const { RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } = globals;
+  const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
   let recordsBuffer = [];
   let batch_num = 0;
   const isMutation = isValidation ? false : true;
@@ -92,7 +93,8 @@ module.exports.jsonProcessing = async (
   globals,
   execute_graphql
 ) => {
-  const { BATCH_SIZE, ARRAY_DELIMITER } = globals;
+  const { ARRAY_DELIMITER } = globals;
+  const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
   const isMutation = isValidation ? false : true;
   let records_num = records.length;
   let batch_num = 0;
@@ -240,4 +242,120 @@ module.exports.responseParser = async (
     }
   }
   return parsed_response;
+};
+
+/**
+ * Download all records for a model by batches
+ * @param {string} model_name model name
+ * @param {string} header CSV header
+ * @param {object} globals global environment variables
+ * @param {function} execute_graphql function for executing queries or mutations
+ * @param {boolean} is_browser is in the browser environment
+ * @param {string} file_path path for saving the CSV file
+ */
+module.exports.bulkDownload = async (
+  model_name,
+  header,
+  globals,
+  execute_graphql,
+  is_browser,
+  file_path
+) => {
+  try {
+    const { RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } = globals;
+    const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
+
+    //get connection resolver
+    let connection_resolver =
+      inflection.pluralize(
+        model_name.slice(0, 1).toLowerCase() + model_name.slice(1)
+      ) + "Connection";
+
+    //get count resolver
+    let count_resolver =
+      "count" +
+      inflection.pluralize(
+        model_name.slice(0, 1).toUpperCase() + model_name.slice(1)
+      );
+    let total_records = await execute_graphql(`{${count_resolver}}`);
+
+    total_records = is_browser
+      ? total_records[count_resolver]
+      : total_records.data[count_resolver] ??
+        total_records.data.data[count_resolver];
+
+    console.log(`Start to download ${total_records} records`);
+    let writableStream = [];
+    if (!is_browser) {
+      const fs = require("fs");
+      writableStream = fs.createWriteStream(file_path);
+    }
+
+    if (is_browser) {
+      writableStream.push(header + RECORD_DELIMITER);
+    } else {
+      writableStream.write(header + RECORD_DELIMITER);
+    }
+
+    //pagination
+    let batch_step = {
+      first: BATCH_SIZE,
+    };
+
+    let hasNextPage = total_records > 0;
+
+    //get attributes names
+    let attributes = header.split(",");
+
+    while (hasNextPage) {
+      let data = await execute_graphql(
+        `{${connection_resolver}( pagination: {first:${batch_step.first}${
+          batch_step.after ? ', after:"' + batch_step.after + '"' : ""
+        }}){
+        pageInfo{
+          hasNextPage
+          endCursor
+        }
+        countries {
+          ${attributes}
+        }        
+      }}`
+      );
+      data = is_browser
+        ? data[connection_resolver]
+        : data.data[connection_resolver] ?? data.data.data[connection_resolver];
+
+      let nodes = data[inflection.pluralize(model_name)];
+      hasNextPage = data.pageInfo.hasNextPage;
+      batch_step["after"] = data.pageInfo.endCursor;
+
+      for await (record of nodes) {
+        let row = "";
+        attributes.forEach((attr) => {
+          if (
+            record[attr] === null ||
+            record[attr] === undefined ||
+            (Array.isArray(record[attr]) && record[attr].length === 0)
+          ) {
+            row += `"NULL"${FIELD_DELIMITER}`;
+          } else {
+            row += Array.isArray(record[attr])
+              ? '"' + record[attr].join(`${ARRAY_DELIMITER}`) + '"'
+              : '"' + record[attr] + '"';
+            row += `${FIELD_DELIMITER}`;
+          }
+        });
+        if (is_browser) {
+          writableStream.push(row + RECORD_DELIMITER);
+        } else {
+          writableStream.write(row + RECORD_DELIMITER);
+        }
+      }
+    }
+    if (is_browser) {
+      return writableStream;
+    }
+  } catch (error) {
+    throw new Error(error);
+  }
 };
