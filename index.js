@@ -145,10 +145,12 @@ module.exports.generateQueries = async (
   const attributes = dataModelDefiniton.attributes;
   let foreignKeyObj = {};
   const associations = dataModelDefiniton.associations;
-  for (const [assocName, assocObj] of Object.entries(associations)) {
-    if (assocObj.keysIn === modelName) {
-      foreignKeyObj[assocObj.targetKey] =
-        "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
+  if (associations) {
+    for (const [assocName, assocObj] of Object.entries(associations)) {
+      if (assocObj.keysIn === modelName) {
+        foreignKeyObj[assocObj.targetKey] =
+          "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
+      }
     }
   }
   let foreignKeys = Object.keys(foreignKeyObj);
@@ -316,7 +318,9 @@ module.exports.bulkDownload = async (
           hasNextPage
           endCursor
         }
-        countries {
+        ${inflection.pluralize(
+          model_name.slice(0, 1).toLowerCase() + model_name.slice(1)
+        )} {
           ${attributes}
         }        
       }}`
