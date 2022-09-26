@@ -1,6 +1,6 @@
 const Papa = require("papaparse");
 const inflection = require("inflection");
-
+const equal = require("fast-deep-equal");
 /**
  * Parse a CSV file to queries or mutations and execute them
  * @param {object} file file stream
@@ -210,18 +210,24 @@ module.exports.responseParser = async (
   batch_size,
   batch_num
 ) => {
-  const response = await execute_graphql(queries);
   let parsed_response = {};
+  let response;
+  try {
+    response = await execute_graphql(queries);
+  } catch (err) {
+    response = err.response;
+  }
   if (response.errors) {
     let subqueries = queries.split("\n");
     subqueries = subqueries.slice(1, subqueries.length - 1);
     if (response.data) {
       let map_queries = {};
-      const inputs = response.errors.map((err_obj) => err_obj.input);
+      const inputs = response.errors.map(
+        (err_obj) => err_obj.input ?? err_obj.extensions.input
+      );
       for (let [query_index, query] of Object.entries(subqueries)) {
         let split_res = query.split(": ");
         if (response.data[split_res[0]] === false) {
-          console.log(query);
           let values = split_res[1].split("(")[1].split(")")[0].split(",");
           let new_val = {};
           for (let value of values) {
@@ -229,7 +235,7 @@ module.exports.responseParser = async (
             new_val[key] = JSON.parse(val);
           }
           for (let [err_index, input] of Object.entries(inputs)) {
-            if (util.isDeepStrictEqual(input, new_val)) {
+            if (equal(input, new_val)) {
               map_queries[query_index] = err_index;
             }
           }
