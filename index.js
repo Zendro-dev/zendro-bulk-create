@@ -112,7 +112,7 @@ module.exports.jsonProcessing = async (
       batch_num
     );
     if (Object.keys(result).length > 0) {
-      throw new Error(result);
+      throw result;
     }
     batch_num += 1;
     records_num -= BATCH_SIZE;
