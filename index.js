@@ -214,8 +214,11 @@ module.exports.responseParser = async (
   let response;
   try {
     response = await execute_graphql(queries);
+    if (response.data && response.data.errors) {
+      response = response.data;
+    }
   } catch (err) {
-    response = err.response;
+    response = err.response ?? err;
   }
   if (response.errors) {
     let subqueries = queries.split("\n");
