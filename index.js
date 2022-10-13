@@ -1,17 +1,17 @@
 const Papa = require("papaparse");
 const inflection = require("inflection");
-
+const equal = require("fast-deep-equal");
 /**
  * Parse a CSV file to queries or mutations and execute them
  * @param {object} file file stream
- * @param {json} dataModelDefiniton data model definiton
+ * @param {json} dataModelDefinition data model Definition
  * @param {boolean} isValidation generate validation queries
  * @param {object} globals global environment variables
  * @param {function} execute_graphql function for executing queries or mutations
  */
 module.exports.csvProcessing = async (
   file,
-  dataModelDefiniton,
+  dataModelDefinition,
   isValidation,
   globals,
   execute_graphql
@@ -33,7 +33,7 @@ module.exports.csvProcessing = async (
         if (recordsBuffer.length % BATCH_SIZE == 0) {
           const queries = await module.exports.generateQueries(
             recordsBuffer,
-            dataModelDefiniton,
+            dataModelDefinition,
             isMutation,
             ARRAY_DELIMITER
           );
@@ -55,7 +55,7 @@ module.exports.csvProcessing = async (
         if (recordsBuffer.length > 0) {
           const queries = await module.exports.generateQueries(
             recordsBuffer,
-            dataModelDefiniton,
+            dataModelDefinition,
             isMutation,
             ARRAY_DELIMITER
           );
@@ -81,14 +81,14 @@ module.exports.csvProcessing = async (
 /**
  * Convert parsed records with JSON format to queries or mutations and execute them
  * @param {object} records parsed records, format as {field: value}
- * @param {json} dataModelDefiniton data model definiton
+ * @param {json} dataModelDefinition data model Definition
  * @param {boolean} isValidation generate validation queries
  * @param {object} globals global environment variables
  * @param {function} execute_graphql function for executing queries or mutations
  */
 module.exports.jsonProcessing = async (
   records,
-  dataModelDefiniton,
+  dataModelDefinition,
   isValidation,
   globals,
   execute_graphql
@@ -101,7 +101,7 @@ module.exports.jsonProcessing = async (
   while (records_num > 0) {
     const queries = await module.exports.generateQueries(
       records.slice(batch_num * BATCH_SIZE, (batch_num + 1) * BATCH_SIZE),
-      dataModelDefiniton,
+      dataModelDefinition,
       isMutation,
       ARRAY_DELIMITER
     );
@@ -112,7 +112,7 @@ module.exports.jsonProcessing = async (
       batch_num
     );
     if (Object.keys(result).length > 0) {
-      throw new Error(result);
+      throw result;
     }
     batch_num += 1;
     records_num -= BATCH_SIZE;
@@ -122,44 +122,42 @@ module.exports.jsonProcessing = async (
 /**
  * Convert parsed records with JSON format to queries or mutations
  * @param {object} records parsed records, format as {field: value}
- * @param {json} dataModelDefiniton data model definiton
+ * @param {json} dataModelDefinition data model Definition
  * @param {boolean} isMutation generate mutations
  * @param {string} arrayDelimiter the delimiter for array
  * @returns {string} generated queries or mutations
  */
 module.exports.generateQueries = async (
   records,
-  dataModelDefiniton,
+  dataModelDefinition,
   isMutation,
   arrayDelimiter
 ) => {
-  const modelName = dataModelDefiniton.model;
+  const modelName = dataModelDefinition.model;
   const model_name_uppercase =
     modelName.slice(0, 1).toUpperCase() + modelName.slice(1);
-  const id = dataModelDefiniton.id.name;
+  const id = dataModelDefinition.id.name;
   const non_string_types = ["Int", "Float", "Boolean"];
   let query = isMutation ? "mutation{\n" : "{\n";
   const API = isMutation
     ? `add${model_name_uppercase}`
     : `validate${model_name_uppercase}ForCreation`;
-  const attributes = dataModelDefiniton.attributes;
-  let foreignKeyObj = {};
-  const associations = dataModelDefiniton.associations;
-  if (associations) {
-    for (const [assocName, assocObj] of Object.entries(associations)) {
-      if (assocObj.keysIn === modelName) {
-        foreignKeyObj[assocObj.targetKey] =
-          "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
-      }
+  const attributes = dataModelDefinition.attributes;
+  let addAssociations = {};
+  const associations = dataModelDefinition.associations;
+  for (const [assocName, assocObj] of Object.entries(associations)) {
+    let addAssocName =
+      "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
+    if (assocObj.sourceKey) {
+      addAssociations[addAssocName] = attributes[assocObj.sourceKey];
+    } else if (assocObj.keysIn === modelName) {
+      addAssociations[addAssocName] = attributes[assocObj.targetKey];
     }
   }
-  let foreignKeys = Object.keys(foreignKeyObj);
   for (const [index, record] of records.entries()) {
     query += `n${index + 1}: ${API}(`;
     for (const [key, value] of Object.entries(record)) {
-      const field =
-        foreignKeys && foreignKeys.includes(key) ? foreignKeyObj[key] : key;
-      let type = attributes[key];
+      let type = attributes[key] ?? addAssociations[key];
       try {
         if (!type) {
           throw new Error(
@@ -173,18 +171,18 @@ module.exports.generateQueries = async (
             ? JSON.parse(value).split(arrayDelimiter)
             : value.split(arrayDelimiter);
           if (non_string_types.includes(type.slice(1, type.length - 1))) {
-            query += `${field}:[${array}],`;
+            query += `${key}:[${array}],`;
           } else {
-            query += `${field}:[${array.map(
+            query += `${key}:[${array.map(
               (element) => `${JSON.stringify(element)}`
             )}],`;
           }
         } else {
           const quoted = value[0] == '"' && value[value.length - 1] == '"';
           if (non_string_types.includes(type)) {
-            query += `${field}:${quoted ? JSON.parse(value) : value},`;
+            query += `${key}:${quoted ? JSON.parse(value) : value},`;
           } else {
-            query += `${field}:${quoted ? value : JSON.stringify(value)},`;
+            query += `${key}:${quoted ? value : JSON.stringify(value)},`;
           }
         }
       } catch (error) {
@@ -212,26 +210,50 @@ module.exports.responseParser = async (
   batch_size,
   batch_num
 ) => {
-  const response = await execute_graphql(queries);
   let parsed_response = {};
+  let response;
+  try {
+    response = await execute_graphql(queries);
+    if (response.data && response.data.errors) {
+      response = response.data;
+    }
+  } catch (err) {
+    response = err.response ?? err;
+  }
   if (response.errors) {
     let subqueries = queries.split("\n");
     subqueries = subqueries.slice(1, subqueries.length - 1);
     if (response.data) {
-      const indices = Object.keys(response.data)
-        .filter((key) => response.data[key] === false)
-        .map((val) => parseInt(val.slice(1)))
+      let map_queries = {};
+      const inputs = response.errors.map(
+        (err_obj) => err_obj.input ?? err_obj.extensions.input
+      );
+      for (let [query_index, query] of Object.entries(subqueries)) {
+        let split_res = query.split(": ");
+        if (response.data[split_res[0]] === false) {
+          let values = split_res[1].split("(")[1].split(")")[0].split(",");
+          let new_val = {};
+          for (let value of values) {
+            let [key, val] = value.split(":");
+            new_val[key] = JSON.parse(val);
+          }
+          for (let [err_index, input] of Object.entries(inputs)) {
+            if (equal(input, new_val)) {
+              map_queries[query_index] = err_index;
+            }
+          }
+        }
+      }
+      const indices = Object.keys(map_queries)
+        .map((val) => parseInt(val))
         .sort((a, b) => a - b);
-      for (let index of indices) {
-        const subquery = subqueries[index - 1];
-        const num = batch_size * batch_num + index;
+      for (const query_index of indices) {
+        const num = batch_size * batch_num + query_index + 1;
         parsed_response["record" + num] = {
-          subquery: subquery,
-          errors: response.errors[index - 1],
+          errors: response.errors[parseInt(map_queries[query_index])],
         };
       }
     } else {
-      console.log(response.errors);
       for (let err of response.errors) {
         const index = err.locations[0].line - 1;
         const subquery = subqueries[index - 1];
@@ -250,6 +272,7 @@ module.exports.responseParser = async (
  * Download all records for a model by batches
  * @param {string} model_name model name
  * @param {string} header CSV header
+ * @param {[string]} attributes attributes corresponding to the CSV header
  * @param {object} globals global environment variables
  * @param {function} execute_graphql function for executing queries or mutations
  * @param {boolean} is_browser is in the browser environment
@@ -258,6 +281,7 @@ module.exports.responseParser = async (
 module.exports.bulkDownload = async (
   model_name,
   header,
+  attributes,
   globals,
   execute_graphql,
   is_browser,
@@ -305,10 +329,6 @@ module.exports.bulkDownload = async (
     };
 
     let hasNextPage = total_records > 0;
-
-    //get attributes names
-    let attributes = header.split(",");
-
     while (hasNextPage) {
       let data = await execute_graphql(
         `{${connection_resolver}( pagination: {first:${batch_step.first}${
@@ -349,6 +369,7 @@ module.exports.bulkDownload = async (
             row += `${FIELD_DELIMITER}`;
           }
         });
+        row = row.slice(0, -1);
         if (is_browser) {
           writableStream.push(row + RECORD_DELIMITER);
         } else {
