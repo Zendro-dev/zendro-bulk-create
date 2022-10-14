@@ -145,13 +145,15 @@ module.exports.generateQueries = async (
   const attributes = dataModelDefinition.attributes;
   let addAssociations = {};
   const associations = dataModelDefinition.associations;
-  for (const [assocName, assocObj] of Object.entries(associations)) {
-    let addAssocName =
-      "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
-    if (assocObj.sourceKey) {
-      addAssociations[addAssocName] = attributes[assocObj.sourceKey];
-    } else if (assocObj.keysIn === modelName) {
-      addAssociations[addAssocName] = attributes[assocObj.targetKey];
+  if (associations) {
+    for (const [assocName, assocObj] of Object.entries(associations)) {
+      let addAssocName =
+        "add" + assocName.slice(0, 1).toUpperCase() + assocName.slice(1);
+      if (assocObj.sourceKey) {
+        addAssociations[addAssocName] = attributes[assocObj.sourceKey];
+      } else if (assocObj.keysIn === modelName) {
+        addAssociations[addAssocName] = attributes[assocObj.targetKey];
+      }
     }
   }
   for (const [index, record] of records.entries()) {
