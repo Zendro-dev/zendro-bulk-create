@@ -292,18 +292,20 @@ module.exports.bulkDownload = async (
   try {
     const { RECORD_DELIMITER, FIELD_DELIMITER, ARRAY_DELIMITER } = globals;
     const BATCH_SIZE = globals.LIMIT_RECORDS ?? globals.MAX_RECORD_LIMIT;
+    const lower_model_name = model_name[0].toLowerCase() + model_name.slice(1);
+    const upper_model_name = model_name[0].toUpperCase() + model_name.slice(1);
 
     //get connection resolver
     let connection_resolver =
       inflection.pluralize(
-        model_name.slice(0, 1).toLowerCase() + model_name.slice(1)
+        lower_model_name
       ) + "Connection";
 
     //get count resolver
     let count_resolver =
       "count" +
       inflection.pluralize(
-        model_name.slice(0, 1).toUpperCase() + model_name.slice(1)
+        upper_model_name
       );
     let total_records = await execute_graphql(`{${count_resolver}}`);
 
@@ -341,7 +343,7 @@ module.exports.bulkDownload = async (
           endCursor
         }
         ${inflection.pluralize(
-          model_name.slice(0, 1).toLowerCase() + model_name.slice(1)
+          lower_model_name
         )} {
           ${attributes}
         }        
@@ -351,10 +353,9 @@ module.exports.bulkDownload = async (
         ? data[connection_resolver]
         : data.data[connection_resolver] ?? data.data.data[connection_resolver];
 
-      let nodes = data[inflection.pluralize(model_name)];
+      let nodes = data[inflection.pluralize(lower_model_name)];
       hasNextPage = data.pageInfo.hasNextPage;
       batch_step["after"] = data.pageInfo.endCursor;
-
       for await (record of nodes) {
         let row = "";
         attributes.forEach((attr) => {
